@@ -3,74 +3,81 @@
 namespace SpawnProtection
 {
     const mstime TIMER_INTERVAL = 500;
-    static std::unordered_map<uint, mstime> invincibleEndTimePerShip;
-    static mstime invincibleDuration = 0;
+    static std::unordered_map<uint, mstime> protectionEndTimePerShip;
+    static mstime protectionDuration = 0;
 
-    bool LoadSettings()
+    void LoadSettings()
     {
         char szCurDir[MAX_PATH];
         GetCurrentDirectory(sizeof(szCurDir), szCurDir);
-        std::string scPluginCfgFile = std::string(szCurDir) + Globals::PLUGIN_CONFIG_FILE;
-
-        invincibleDuration = IniGetI(scPluginCfgFile, "SpawnProtection", "ProtectionDuration", 0) * 1000;
-        return true;
+        std::string scPluginCfgFile = std::string(szCurDir) + "\\flhook_plugins\\flsr.cfg";
+        protectionDuration = IniGetI(scPluginCfgFile, "SpawnProtection", "ProtectionDuration", 0) * 1000;
 	}
 
-    void SetInvincible(const uint shipId)
+    static bool IsInNoPvpSystem(const uint shipId)
     {
-        pub::SpaceObj::SetInvincible(shipId, true, false, 0);
-        invincibleEndTimePerShip[shipId] = timeInMS() + invincibleDuration;
+        uint systemId;
+        pub::SpaceObj::GetSystem(shipId, systemId);
+        for (const auto& noPvPSystem : map_mapNoPVPSystems)
+        {
+            if (noPvPSystem.second == systemId)
+                return true;
+        }
+        return false;
     }
 
-    void UpdateInvincibleStates()
+    static void ActivateSpawnProtection(const uint shipId)
     {
-        if (Modules::GetModuleState("SpawnProtection"))
+        pub::SpaceObj::SetInvincible(shipId, true, false, 0);
+        protectionEndTimePerShip[shipId] = timeInMS() + protectionDuration;
+    }
+
+    void UpdateSpawnProtectionValidity()
+    {
+        const mstime now = timeInMS();
+        auto it = protectionEndTimePerShip.begin();
+        while (it != protectionEndTimePerShip.end())
         {
-            const mstime now = timeInMS();
-            std::vector<uint> shipIdsToDelete;
-            for (const auto& invincibleShipTime : invincibleEndTimePerShip)
+            // Protection time ended
+            const mstime protectionStartTime = it->second;
+            if (now > protectionStartTime)
             {
-                if (now > invincibleShipTime.second)
+                const uint shipId = it->first;
+                if (pub::SpaceObj::ExistsAndAlive(shipId) == 0) // 0 -> true
                 {
-                    if (pub::SpaceObj::ExistsAndAlive(invincibleShipTime.first) == 0) // 0 -> true
-                        pub::SpaceObj::SetInvincible(invincibleShipTime.first, false, false, 0);
-                    shipIdsToDelete.push_back(invincibleShipTime.first);
+                    if (IsInNoPvpSystem(shipId))
+                        pub::SpaceObj::SetInvincible2(shipId, false, true, 0);
+                    else
+                        pub::SpaceObj::SetInvincible(shipId, false, false, 0);
                 }
+                it = protectionEndTimePerShip.erase(it);
             }
-            for (const uint shipId : shipIdsToDelete)
-                invincibleEndTimePerShip.erase(shipId);
+            else
+                it++;
         }
     }
 
     void __stdcall SystemSwitchOutComplete_AFTER(unsigned int shipId, unsigned int clientId)
     {
         returncode = DEFAULT_RETURNCODE;
-
-        if (Modules::GetModuleState("SpawnProtection"))
-            SetInvincible(shipId);
+        ActivateSpawnProtection(shipId);
     }
 
     void __stdcall PlayerLaunch_AFTER(unsigned int shipId, unsigned int clientId)
     {
         returncode = DEFAULT_RETURNCODE;
-
-        if (Modules::GetModuleState("SpawnProtection"))
-            SetInvincible(shipId);
+        ActivateSpawnProtection(shipId);
     }
 
     void __stdcall LaunchComplete_AFTER(unsigned int baseId, unsigned int shipId)
     {
         returncode = DEFAULT_RETURNCODE;
-
-        if (Modules::GetModuleState("SpawnProtection"))
-            SetInvincible(shipId);
+        ActivateSpawnProtection(shipId);
     }
 
     void __stdcall JumpInComplete_AFTER(unsigned int systemId, unsigned int shipId)
     {
         returncode = DEFAULT_RETURNCODE;
-
-        if (Modules::GetModuleState("SpawnProtection"))
-            SetInvincible(shipId);
+        ActivateSpawnProtection(shipId);
     }
 }
